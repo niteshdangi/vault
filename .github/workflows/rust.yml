@@ -74,10 +74,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create checksums
+      - name: Flatten artifacts and create checksums
         run: |
-          cd artifacts
-          find . -type f -name 'vault-*' -exec mv {} . \;
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          cd release
           sha256sum vault-* > checksums-sha256.txt
           cat checksums-sha256.txt
 
@@ -86,5 +87,5 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/vault-*
-            artifacts/checksums-sha256.txt
+            release/vault-*
+            release/checksums-sha256.txt
