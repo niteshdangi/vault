@@ -8,7 +8,7 @@
 #![cfg(target_os = "windows")]
 
 use anyhow::{Context, Result};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use crate::crypto::keys::Vkek;
 use crate::store::sqlite;
@@ -32,9 +32,8 @@ fn dpapi_protect(plaintext: &[u8]) -> Result<Vec<u8>> {
 
         let protected =
             std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize).to_vec();
-        windows::Win32::System::Memory::LocalFree(windows::Win32::Foundation::HLOCAL(
-            output_blob.pbData as _,
-        ));
+        // HLOCAL implements Drop in windows 0.58+, auto-freeing the buffer
+        drop(windows::Win32::Foundation::HLOCAL(output_blob.pbData as _));
         Ok(protected)
     }
 }
@@ -58,9 +57,8 @@ fn dpapi_unprotect(protected: &[u8]) -> Result<Vec<u8>> {
 
         let plaintext =
             std::slice::from_raw_parts(output_blob.pbData, output_blob.cbData as usize).to_vec();
-        windows::Win32::System::Memory::LocalFree(windows::Win32::Foundation::HLOCAL(
-            output_blob.pbData as _,
-        ));
+        // HLOCAL implements Drop in windows 0.58+, auto-freeing the buffer
+        drop(windows::Win32::Foundation::HLOCAL(output_blob.pbData as _));
         Ok(plaintext)
     }
 }

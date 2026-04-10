@@ -175,6 +175,7 @@ pub fn unlock_vault(conn: &Connection) -> Result<Vkek> {
         for slot in &slots {
             match crate::auth::slot::unwrap_dpapi_slot(slot) {
                 Ok(vkek) => {
+                    #[cfg(unix)]
                     cache_vkek_in_agent(&vkek, &vault_id);
                     return Ok(vkek);
                 }
