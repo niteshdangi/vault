@@ -1,3 +1,9 @@
 *.db
 dist/
 vault
+
+
+# Added by cargo
+
+/target
+reviews/

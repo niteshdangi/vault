@@ -1,0 +1,62 @@
+[package]
+name = "vault"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+description = "Local-first CLI secrets vault with envelope encryption and flexible authentication"
+license = "MIT"
+repository = "https://github.com/niteshdangi/vault"
+homepage = "https://github.com/niteshdangi/vault"
+readme = "README.md"
+categories = ["command-line-utilities", "cryptography"]
+keywords = ["secrets", "vault", "cli", "encryption", "security"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+aes-gcm = "0.10"
+argon2 = "0.5"
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rpassword = "7"
+dirs = "5"
+libc = "0.2"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+anyhow = "1"
+thiserror = "1"
+hex = "0.4"
+base64 = "0.22.1"
+tempfile = "3"
+hkdf = "0.12"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linux-keyutils = "0.2"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.28", features = ["process", "mman", "socket", "uio", "fs", "user"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_System_Memory", "Win32_Foundation"] }
+
+[lib]
+name = "vault_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vault"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = true
