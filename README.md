@@ -13,12 +13,30 @@ Local-first CLI secrets vault with envelope encryption and flexible authenticati
 - **Encrypted at rest** — secret names, values, and keys are all AES-256-GCM encrypted
 - **Memory hardened** — zeroize-on-drop, no core dumps for key material
 
+## Installation
+
+### Quick install (Linux / macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/niteshdangi/vault/main/install.sh | sh
+```
+
+The installer auto-detects your OS and architecture, downloads the latest release, verifies the SHA-256 checksum, and installs to `~/.local/bin` (or `/usr/local/bin` with sudo). Set `VAULT_INSTALL_DIR` to override.
+
+### Build from source
+
+```bash
+# Requires Rust 1.78+ (SQLite is bundled — no system headers needed)
+cargo install --path .
+```
+
+### Manual download
+
+Grab the binary for your platform from [GitHub Releases](https://github.com/niteshdangi/vault/releases) and place it on your `PATH`.
+
 ## Quick Start
 
 ```bash
-# Build from source (no system SQLite headers needed — bundled)
-cargo install --path .
-
 # Initialize a new vault (prompts for passphrase)
 vault init
 
