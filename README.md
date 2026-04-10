@@ -23,6 +23,14 @@ curl -fsSL https://raw.githubusercontent.com/niteshdangi/vault/main/install.sh |
 
 The installer auto-detects your OS and architecture, downloads the latest release, verifies the SHA-256 checksum, and installs to `~/.local/bin` (or `/usr/local/bin` with sudo). Set `VAULT_INSTALL_DIR` to override.
 
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/niteshdangi/vault/main/install.ps1 | iex
+```
+
+Downloads the latest release, verifies the SHA-256 checksum, and installs to `%LOCALAPPDATA%\vault\`. The install directory is added to your user PATH automatically. Set `VAULT_INSTALL_DIR` to override.
+
 ### Build from source
 
 ```bash
