@@ -50,6 +50,18 @@ enum Commands {
     Get {
         name: String,
     },
+    /// Resolve secrets via a JSON request/response protocol on stdin/stdout.
+    ///
+    /// Designed for OpenClaw `exec` SecretRef providers and similar unattended
+    /// consumers. Reads one JSON object from stdin, writes one JSON object to
+    /// stdout, never prompts. Fails closed if the vault is locked behind a
+    /// passphrase-only slot.
+    Resolve {
+        /// Output protocol shape. Currently only `openclaw` (default) is
+        /// supported; future protocols can be added here.
+        #[arg(long, default_value = "openclaw")]
+        protocol: String,
+    },
     /// List all secret names
     List,
     /// Delete a secret
@@ -176,6 +188,7 @@ fn main() -> Result<()> {
             stdin,
         } => cmd_set(&db_path, &name, value, stdin),
         Commands::Get { name } => cmd_get(&db_path, &name),
+        Commands::Resolve { protocol } => cmd_resolve(&db_path, &protocol),
         Commands::List => cmd_list(&db_path),
         Commands::Delete { name } => cmd_delete(&db_path, &name),
         #[cfg(unix)]
@@ -274,6 +287,102 @@ fn cmd_get(db_path: &std::path::Path, name: &str) -> Result<()> {
     if atty_check() {
         println!();
     }
+    Ok(())
+}
+
+fn cmd_resolve(db_path: &std::path::Path, protocol: &str) -> Result<()> {
+    // Reserve namespace for future protocols.
+    if protocol != "openclaw" {
+        anyhow::bail!(
+            "unsupported resolve protocol '{}': supported protocols: openclaw",
+            protocol
+        );
+    }
+
+    use serde_json::json;
+    use std::io::Write;
+
+    // --- Read & parse request ----------------------------------------------
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .context("failed to read JSON request from stdin")?;
+
+    let req: serde_json::Value =
+        serde_json::from_str(&buf).context("resolve request is not valid JSON")?;
+
+    let proto_ver = req
+        .get("protocolVersion")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    if proto_ver != 1 {
+        anyhow::bail!(
+            "unsupported protocolVersion {}: this build supports protocolVersion 1",
+            proto_ver
+        );
+    }
+    let ids: Vec<String> = req
+        .get("ids")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow::anyhow!("resolve request missing 'ids' array"))?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| anyhow::anyhow!("'ids' entries must be strings"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // --- Open vault & unlock non-interactively -----------------------------
+    let conn = open_db(db_path)?;
+    let vkek = vault::unlock_vault_noninteractive(&conn)?;
+
+    // --- Resolve each id ---------------------------------------------------
+    let mut values = serde_json::Map::new();
+    let mut errors = serde_json::Map::new();
+    for id in &ids {
+        if let Err(e) = vault::validate_secret_name(id) {
+            errors.insert(
+                id.clone(),
+                json!({ "message": format!("invalid id: {}", e) }),
+            );
+            continue;
+        }
+        match vault::get_secret(&conn, &vkek, id) {
+            Ok(bytes) => {
+                let v = Zeroizing::new(bytes);
+                match std::str::from_utf8(v.as_slice()) {
+                    Ok(s) => {
+                        values.insert(id.clone(), json!(s));
+                    }
+                    Err(_) => {
+                        errors.insert(
+                            id.clone(),
+                            json!({ "message": "secret value is not valid UTF-8" }),
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                errors.insert(id.clone(), json!({ "message": format!("{}", e) }));
+            }
+        }
+    }
+
+    // --- Emit response -----------------------------------------------------
+    let mut resp = serde_json::Map::new();
+    resp.insert("protocolVersion".to_string(), json!(1));
+    resp.insert("values".to_string(), serde_json::Value::Object(values));
+    if !errors.is_empty() {
+        resp.insert("errors".to_string(), serde_json::Value::Object(errors));
+    }
+
+    let out = serde_json::to_string(&serde_json::Value::Object(resp))
+        .context("failed to serialize resolve response")?;
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(out.as_bytes())?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
     Ok(())
 }
 

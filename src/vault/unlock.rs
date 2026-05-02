@@ -85,6 +85,19 @@ fn build_unlock_error(attempts: &[UnlockAttempt], fallback_msg: &str) -> anyhow:
 /// Unlock the vault and return the VKEK.
 /// Tries agent first (unix only), then auth slots.
 pub fn unlock_vault(conn: &Connection) -> Result<Vkek> {
+    unlock_vault_inner(conn, true)
+}
+
+/// Unlock the vault without ever prompting for a passphrase.
+///
+/// Used by unattended consumers (e.g. `vault resolve` over a pipe) that must
+/// fail closed if the only available auth slot is interactive. Tries agent
+/// and platform-keyring slots only; returns an error if those all miss.
+pub fn unlock_vault_noninteractive(conn: &Connection) -> Result<Vkek> {
+    unlock_vault_inner(conn, false)
+}
+
+fn unlock_vault_inner(conn: &Connection, allow_passphrase: bool) -> Result<Vkek> {
     let vault_id = get_vault_id(conn)?;
     let mut attempts: Vec<UnlockAttempt> = Vec::new();
 
@@ -195,6 +208,12 @@ pub fn unlock_vault(conn: &Connection) -> Result<Vkek> {
     // Try passphrase slots
     let slots = sqlite::get_auth_slots(conn, SlotKind::Passphrase)?;
     if !slots.is_empty() {
+        if !allow_passphrase {
+            return Err(build_unlock_error(
+                &attempts,
+                "vault is locked; only passphrase slot available and interactive prompts are disabled",
+            ));
+        }
         let passphrase = Zeroizing::new(crate::auth::passphrase::prompt_passphrase(false)?);
         for slot in &slots {
             match crate::auth::slot::unwrap_passphrase_slot(slot, passphrase.as_slice()) {
