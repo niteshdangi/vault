@@ -2,7 +2,7 @@
 
 Local-first CLI secrets vault with envelope encryption and flexible authentication.
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)]()
 
@@ -124,6 +124,7 @@ Multiple auth methods can be active simultaneously.
 | `vault lock` | Lock vault — stop agent *(Unix only)* |
 | `vault unlock` | Unlock vault — start agent daemon *(Unix only)* |
 | `vault exec -- <cmd>` | Run command with secrets as env vars ⚠️ |
+| `vault resolve` | Resolve secrets over the OpenClaw SecretRef protocol (stdin/stdout JSON) |
 | `vault export [file]` | Export encrypted vault backup (stdout if file omitted) |
 | `vault import <file>` | Import from encrypted backup |
 | `vault auth list` | List auth slots |
@@ -149,6 +150,7 @@ Multiple auth methods can be active simultaneously.
 | `vault exec` | `-e`, `--env NAME=secret` | Map env var NAME to vault secret |
 | `vault exec` | `--all` | Inject all secrets as env vars |
 | `vault exec` | `--yes` | Skip confirmation prompt for `--all` |
+| `vault resolve` | `--protocol <name>` | Output protocol shape (default: `openclaw`) |
 | `vault export` | `--stdin` | Read export passphrase from stdin |
 | `vault import` | `--force` | Overwrite existing secrets on collision |
 | `vault import` | `--stdin` | Read export passphrase from stdin |
@@ -157,6 +159,47 @@ Multiple auth methods can be active simultaneously.
 > **⚠️ `vault exec` warning:** Secrets injected as environment variables are visible to any same-UID process via `/proc/<pid>/environ` on Linux. Prefer `vault get` in subshells where possible. Requires explicit `-e NAME=secret` mappings or `--all` flag.
 
 > **Note on `--all`:** Secret names are transformed to env var names by replacing `/`, `-`, `.` with `_` and uppercasing. Collisions are detected and abort execution.
+
+### Agent integration (`vault resolve`)
+
+`vault resolve` implements the [OpenClaw](https://docs.openclaw.ai) `exec` SecretRef
+protocol so agents and daemons can fetch secrets non-interactively — no passphrase
+prompt, no secrets in config files or environment variables.
+
+It reads a JSON request on stdin and writes JSON to stdout:
+
+```console
+$ echo '{"protocolVersion":1,"provider":"vault","ids":["CLOUDFLARE_API_TOKEN"]}' | vault resolve
+{"protocolVersion":1,"values":{"CLOUDFLARE_API_TOKEN":"<secret>"}}
+```
+
+Missing secrets are reported per-id without failing the whole batch, so one bad
+reference does not break an otherwise valid request:
+
+```console
+$ echo '{"protocolVersion":1,"ids":["REAL_KEY","NOPE"]}' | vault resolve
+{"errors":{"NOPE":{"message":"secret 'NOPE' not found"}},"protocolVersion":1,"values":{"REAL_KEY":"<secret>"}}
+```
+
+Unlocking is non-interactive, so this requires an auth method that works unattended
+(`--trust-local`, TPM, Keychain, or DPAPI), or a running agent daemon (`vault unlock`).
+
+To wire it into OpenClaw, register vault as an `exec` secret provider:
+
+```json5
+{
+  secrets: {
+    providers: {
+      vault: { source: "exec", command: "vault", args: ["resolve"] },
+    },
+  },
+}
+```
+
+Config values can then reference secrets as
+`{ source: "exec", provider: "vault", id: "CLOUDFLARE_API_TOKEN" }` instead of
+embedding the literal token.
+
 
 ## Agent Daemon
 

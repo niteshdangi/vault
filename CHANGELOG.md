@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-02
+
+### Added
+- `vault resolve` subcommand implementing the OpenClaw `exec` SecretRef protocol
+  (protocolVersion 1). Reads a JSON request on stdin (`{protocolVersion, provider, ids}`)
+  and writes `{protocolVersion, values, errors?}` on stdout, resolving each id
+  non-interactively so unattended agents can fetch secrets without a passphrase prompt.
+  Per-id failures are reported in `errors` without failing the whole batch.
+- `--protocol` flag on `resolve` (currently only `openclaw`), reserving the namespace
+  for future protocol shapes.
+
 ## [0.1.0] - 2026-04-10
 
 ### Added
