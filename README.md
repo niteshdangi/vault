@@ -2,7 +2,7 @@
 
 Local-first CLI secrets vault with envelope encryption and flexible authentication.
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE-MIT)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)]()
 
