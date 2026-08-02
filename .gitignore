@@ -1,6 +1,6 @@
 *.db
 dist/
-vault
+/vault
 
 
 # Added by cargo
