@@ -151,6 +151,7 @@ Multiple auth methods can be active simultaneously.
 | `vault exec` | `--all` | Inject all secrets as env vars |
 | `vault exec` | `--yes` | Skip confirmation prompt for `--all` |
 | `vault resolve` | `--protocol <name>` | Output protocol shape (default: `openclaw`) |
+| `vault resolve` | `--allow <pattern>` | Restrict resolvable secrets to a glob (repeatable) |
 | `vault export` | `--stdin` | Read export passphrase from stdin |
 | `vault import` | `--force` | Overwrite existing secrets on collision |
 | `vault import` | `--stdin` | Read export passphrase from stdin |
@@ -190,15 +191,58 @@ To wire it into OpenClaw, register vault as an `exec` secret provider:
 {
   secrets: {
     providers: {
-      vault: { source: "exec", command: "vault", args: ["resolve"] },
+      vault: {
+        source: "exec",
+        command: "vault",
+        args: ["resolve", "--allow", "telegram/*"],
+      },
     },
   },
 }
 ```
 
 Config values can then reference secrets as
-`{ source: "exec", provider: "vault", id: "CLOUDFLARE_API_TOKEN" }` instead of
+`{ source: "exec", provider: "vault", id: "telegram/botToken" }` instead of
 embedding the literal token.
+
+> **Note:** OpenClaw requires the provider `command` to be an absolute path that
+> is not group- or world-writable. `chmod 755 ~/.local/bin/vault` if it was
+> installed with looser permissions.
+
+#### Scoping access with `--allow`
+
+By default `resolve` can read every secret in the vault. Pass `--allow` to grant
+least-privilege access instead — useful when several agents share one vault and
+none of them should be able to read all of it.
+
+```console
+# This caller can read telegram/botToken but nothing else.
+$ vault resolve --allow 'telegram/*'
+```
+
+`--allow` is repeatable and the patterns union:
+
+```console
+$ vault resolve --allow 'telegram/*' --allow 'github/token'
+```
+
+Pattern syntax treats names as `/`-delimited paths:
+
+| Pattern       | Matches                      | Does not match         |
+|---------------|------------------------------|------------------------|
+| `telegram/*`  | `telegram/botToken`          | `telegram/a/b`         |
+| `telegram/**` | `telegram/a`, `telegram/a/b` | `telegram`, `aws/key`  |
+| `db?`         | `db1`                        | `db`, `db12`           |
+| `**`          | everything                   | —                      |
+
+`*` stays within one segment, `**` crosses segments, and `?` matches a single
+non-separator character. There is intentionally no `[a-z]` or `{a,b}` syntax,
+because secret names may legitimately contain those characters.
+
+Out-of-scope ids are reported as ordinary `not found` errors, identical to ids
+that genuinely do not exist — a restricted caller cannot use `resolve` to probe
+for the names of secrets it may not read. A request consisting entirely of
+out-of-scope ids is answered without unlocking the vault at all.
 
 
 ## Agent Daemon

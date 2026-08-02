@@ -1,9 +1,9 @@
 //! CLI secrets vault with envelope encryption.
 
-use vault_lib as lib;
-use lib::{auth, store, vault};
 #[cfg(unix)]
 use lib::agent;
+use lib::{auth, store, vault};
+use vault_lib as lib;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -47,9 +47,7 @@ enum Commands {
         stdin: bool,
     },
     /// Retrieve a secret
-    Get {
-        name: String,
-    },
+    Get { name: String },
     /// Resolve secrets via a JSON request/response protocol on stdin/stdout.
     ///
     /// Designed for OpenClaw `exec` SecretRef providers and similar unattended
@@ -61,13 +59,23 @@ enum Commands {
         /// supported; future protocols can be added here.
         #[arg(long, default_value = "openclaw")]
         protocol: String,
+        /// Restrict which secrets may be resolved, as a glob pattern.
+        ///
+        /// Repeatable; a request id is permitted if it matches any pattern.
+        /// `*` matches within one `/`-delimited segment, `**` crosses
+        /// segments, `?` matches a single non-separator character. Ids outside
+        /// the scope are reported as per-id errors and are indistinguishable
+        /// from missing secrets, so a caller cannot probe for names it is not
+        /// allowed to read.
+        ///
+        /// When omitted, every secret is resolvable.
+        #[arg(long = "allow", value_name = "PATTERN")]
+        allow: Vec<String>,
     },
     /// List all secret names
     List,
     /// Delete a secret
-    Delete {
-        name: String,
-    },
+    Delete { name: String },
     /// Lock the vault (stop agent, zeroize keys)
     #[cfg(unix)]
     Lock,
@@ -136,9 +144,7 @@ enum AuthCommands {
     /// List all authentication slots
     List,
     /// Remove an authentication slot
-    Remove {
-        slot_id: i64,
-    },
+    Remove { slot_id: i64 },
 }
 
 fn main() -> Result<()> {
@@ -182,13 +188,9 @@ fn main() -> Result<()> {
             };
             cmd_init(&db_path, auth)
         }
-        Commands::Set {
-            name,
-            value,
-            stdin,
-        } => cmd_set(&db_path, &name, value, stdin),
+        Commands::Set { name, value, stdin } => cmd_set(&db_path, &name, value, stdin),
         Commands::Get { name } => cmd_get(&db_path, &name),
-        Commands::Resolve { protocol } => cmd_resolve(&db_path, &protocol),
+        Commands::Resolve { protocol, allow } => cmd_resolve(&db_path, &protocol, &allow),
         Commands::List => cmd_list(&db_path),
         Commands::Delete { name } => cmd_delete(&db_path, &name),
         #[cfg(unix)]
@@ -206,11 +208,7 @@ fn main() -> Result<()> {
         Commands::Status => cmd_status(&db_path),
         Commands::Doctor => cmd_doctor(&db_path),
         Commands::Export { file, stdin } => cmd_export(&db_path, file, stdin),
-        Commands::Import {
-            file,
-            stdin,
-            force,
-        } => cmd_import(&db_path, &file, stdin, force),
+        Commands::Import { file, stdin, force } => cmd_import(&db_path, &file, stdin, force),
         Commands::Auth { command: auth_cmd } => match auth_cmd {
             AuthCommands::Add { slot_type, force } => cmd_auth_add(&db_path, &slot_type, force),
             AuthCommands::List => cmd_auth_list(&db_path),
@@ -290,7 +288,7 @@ fn cmd_get(db_path: &std::path::Path, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_resolve(db_path: &std::path::Path, protocol: &str) -> Result<()> {
+fn cmd_resolve(db_path: &std::path::Path, protocol: &str, allow: &[String]) -> Result<()> {
     // Reserve namespace for future protocols.
     if protocol != "openclaw" {
         anyhow::bail!(
@@ -299,8 +297,15 @@ fn cmd_resolve(db_path: &std::path::Path, protocol: &str) -> Result<()> {
         );
     }
 
+    // No --allow flags means unrestricted. An explicit but unmatchable scope is
+    // still honoured (and simply resolves nothing) rather than being widened.
+    let scope = if allow.is_empty() {
+        vault::Scope::unrestricted()
+    } else {
+        vault::Scope::parse(allow).context("invalid --allow scope")?
+    };
+
     use serde_json::json;
-    use std::io::Write;
 
     // --- Read & parse request ----------------------------------------------
     let mut buf = String::new();
@@ -334,13 +339,34 @@ fn cmd_resolve(db_path: &std::path::Path, protocol: &str) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
 
     // --- Open vault & unlock non-interactively -----------------------------
+    //
+    // Partition first so a request consisting entirely of out-of-scope ids is
+    // answered without ever unwrapping the VKEK.
+    let (permitted, denied): (Vec<&String>, Vec<&String>) =
+        ids.iter().partition(|id| scope.allows(id));
+
+    let mut values = serde_json::Map::new();
+    let mut errors = serde_json::Map::new();
+
+    // Out-of-scope ids are reported exactly as missing ids are. Leaking the
+    // distinction would let a restricted caller enumerate secret names it has
+    // no right to know about.
+    for id in denied {
+        errors.insert(
+            id.clone(),
+            json!({ "message": format!("secret '{}' not found", id) }),
+        );
+    }
+
+    if permitted.is_empty() {
+        return emit_resolve_response(values, errors);
+    }
+
     let conn = open_db(db_path)?;
     let vkek = vault::unlock_vault_noninteractive(&conn)?;
 
-    // --- Resolve each id ---------------------------------------------------
-    let mut values = serde_json::Map::new();
-    let mut errors = serde_json::Map::new();
-    for id in &ids {
+    // --- Resolve each permitted id -----------------------------------------
+    for id in permitted {
         if let Err(e) = vault::validate_secret_name(id) {
             errors.insert(
                 id.clone(),
@@ -369,7 +395,17 @@ fn cmd_resolve(db_path: &std::path::Path, protocol: &str) -> Result<()> {
         }
     }
 
-    // --- Emit response -----------------------------------------------------
+    emit_resolve_response(values, errors)
+}
+
+/// Serialize and write a resolve response to stdout.
+fn emit_resolve_response(
+    values: serde_json::Map<String, serde_json::Value>,
+    errors: serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    use serde_json::json;
+    use std::io::Write;
+
     let mut resp = serde_json::Map::new();
     resp.insert("protocolVersion".to_string(), json!(1));
     resp.insert("values".to_string(), serde_json::Value::Object(values));
@@ -529,7 +565,8 @@ fn cmd_exec(
         }
 
         // Check for collisions (including dash/dot → underscore transforms)
-        let collisions: Vec<_> = env_map.iter()
+        let collisions: Vec<_> = env_map
+            .iter()
             .filter(|(_, secrets)| secrets.len() > 1)
             .collect();
         if !collisions.is_empty() {
@@ -620,7 +657,8 @@ fn cmd_doctor(db_path: &std::path::Path) -> Result<()> {
 /// Read a passphrase line from stdin (for --stdin mode).
 fn read_passphrase_from_stdin() -> Result<Vec<u8>> {
     let mut line = String::new();
-    std::io::stdin().read_line(&mut line)
+    std::io::stdin()
+        .read_line(&mut line)
         .context("failed to read passphrase from stdin")?;
     // Strip trailing newline
     if line.ends_with('\n') {
@@ -689,11 +727,7 @@ fn cmd_import(db_path: &std::path::Path, file: &str, stdin: bool, force: bool) -
     Ok(())
 }
 
-fn cmd_auth_add(
-    db_path: &std::path::Path,
-    slot_type: &str,
-    force: bool,
-) -> Result<()> {
+fn cmd_auth_add(db_path: &std::path::Path, slot_type: &str, force: bool) -> Result<()> {
     let conn = open_db(db_path)?;
     let vkek = vault::unlock_vault(&conn)?;
     let vault_id = vault::get_vault_id(&conn)?;

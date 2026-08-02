@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `vault resolve --allow <pattern>` restricts which secrets a caller may
+  resolve, giving unattended consumers least-privilege access instead of
+  all-or-nothing access to the vault. Repeatable; patterns union. Supports
+  `*` (within one `/` segment), `**` (across segments), and `?` (single
+  non-separator character).
+- Integration test coverage for `vault resolve`, which previously had none.
+
+### Security
+- Out-of-scope ids in `resolve` are reported as `not found`, identical to
+  genuinely missing ids, so a scoped caller cannot enumerate secret names it
+  is not permitted to read.
+- A `resolve` request containing only out-of-scope ids is answered without
+  unwrapping the VKEK.
+
 ## [0.2.0] - 2026-08-02
 
 ### Added
